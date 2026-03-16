@@ -11,7 +11,9 @@ pnpm-lock.yaml
 .env.local
 .env.*.local
 .env.uep
+tunnel-url.env
 *.env
+!.env.example
 
 # Build outputs
 dist/
@@ -31,6 +33,10 @@ test-*.js
 list-*.js
 setup-*.js
 create-*.js
+
+# Tunnel configuration (keep scripts, exclude config)
+tunnel-url.env
+**/tunnel-url.env
 
 # OS files
 .DS_Store
