@@ -25,9 +25,9 @@ const navItems = [
   { href: "/dashboard/compras", label: "Compras", icon: ShoppingCart },
   { href: "/dashboard/cobranzas", label: "Cobrado", icon: Wallet },
   { href: "/dashboard/pagos", label: "Pagado", icon: CreditCard },
+  { href: "/dashboard/proveedores", label: "Proveedores", icon: Building2 },
   { href: "/dashboard/comprobantes", label: "Comprobantes", icon: FileText },
   { href: "/dashboard/reportes", label: "Reportes", icon: BarChart3 },
-  { href: "/dashboard/reportes-especificos", label: "Reportes Específicos", icon: ClipboardList },
 ];
 
 export default function Sidebar() {

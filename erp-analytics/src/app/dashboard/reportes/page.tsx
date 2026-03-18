@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
+import DataTable from "@/components/DataTable";
 import StatsCard from "@/components/StatsCard";
-import { TrendingUp, TrendingDown, Minus, BarChart3, Calendar, FileText } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, BarChart3, Calendar, FileText, DollarSign, ShoppingCart, Wallet, CreditCard, ClipboardList, ArrowRight } from "lucide-react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, Area, AreaChart
@@ -59,6 +61,11 @@ interface ReportesData {
   };
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+interface ActividadAgrupada { id_actividad: number; actividad: string; total_facturado?: number; total_cobrado?: number; cantidad: number; promedio: number; clientes_unicos: number }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+interface TotalesAgrupados { ventas: any; cobranzas: any; compras: any; pagos: any }
+
 function fmt(val: number) {
   return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(val);
 }
@@ -70,10 +77,16 @@ function formatPeriodo(periodo: string) {
 }
 
 export default function ReportesPage() {
+  const router = useRouter();
   const [data, setData] = useState<ReportesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [factActividad, setFactActividad] = useState<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [cobActividad, setCobActividad] = useState<any>(null);
+  const [totales, setTotales] = useState<TotalesAgrupados | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -81,8 +94,16 @@ export default function ReportesPage() {
       const params = new URLSearchParams();
       if (fechaInicio) params.set("fechaInicio", fechaInicio);
       if (fechaFin) params.set("fechaFin", fechaFin);
-      const result = await apiFetch<ReportesData>(`/api/reportes/analisis?${params}`);
+      const [result, fAct, cAct, tot] = await Promise.all([
+        apiFetch<ReportesData>(`/api/reportes/analisis?${params}`),
+        apiFetch(`/api/reportes/facturacion-por-actividad?${params}`),
+        apiFetch(`/api/reportes/cobranzas-por-actividad?${params}`),
+        apiFetch<TotalesAgrupados>(`/api/reportes/totales-agrupados?${params}`),
+      ]);
       setData(result);
+      setFactActividad(fAct);
+      setCobActividad(cAct);
+      setTotales(tot);
     } catch (e) { 
       console.error(e); 
     } finally { 
@@ -91,7 +112,6 @@ export default function ReportesPage() {
   }, [fechaInicio, fechaFin]);
 
   useEffect(() => { 
-    // Establecer fechas por defecto (últimos 12 meses)
     const hoy = new Date();
     const hace12Meses = new Date();
     hace12Meses.setMonth(hoy.getMonth() - 12);
@@ -162,6 +182,24 @@ export default function ReportesPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Reportes y Análisis</h1>
         <p className="text-gray-500 mt-1">Análisis estadístico y proyecciones</p>
+      </div>
+
+      {/* Banner Reportes Específicos */}
+      <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl p-6 text-white shadow-lg hover:shadow-xl transition-shadow cursor-pointer" onClick={() => router.push('/dashboard/reportes-especificos')}>
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <div className="flex items-center gap-3 mb-2">
+              <ClipboardList className="w-8 h-8" />
+              <h2 className="text-2xl font-bold">Reportes Específicos</h2>
+            </div>
+            <p className="text-indigo-100 text-sm mb-4 max-w-2xl">
+              Accede a reportes detallados por hospital, facturación, órdenes de pago, honorarios y análisis específicos de compras y ventas.
+            </p>
+            <button className="flex items-center gap-2 bg-white text-indigo-600 px-4 py-2 rounded-lg font-medium hover:bg-indigo-50 transition-colors">
+              Ver Reportes Específicos <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Filtros de fecha */}
@@ -322,6 +360,63 @@ export default function ReportesPage() {
           <p className="text-sm text-gray-500 mt-4 text-center">
             La eficiencia de cobranza mide el porcentaje de ventas que se cobran en cada período
           </p>
+        </div>
+      )}
+
+      {/* Totales Agrupados del Período */}
+      {totales && (
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Totales del Período</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <StatsCard title="Ventas" value={fmt(totales.ventas?.total || 0)} subtitle={`${totales.ventas?.cantidad || 0} facturas | Prom: ${fmt(totales.ventas?.promedio || 0)}`} icon={DollarSign} color="blue" />
+            <StatsCard title="Cobranzas" value={fmt(totales.cobranzas?.total || 0)} subtitle={`${totales.cobranzas?.cantidad || 0} recibos | Prom: ${fmt(totales.cobranzas?.promedio || 0)}`} icon={Wallet} color="green" />
+            <StatsCard title="Compras" value={fmt(totales.compras?.total || 0)} subtitle={`${totales.compras?.cantidad || 0} facturas | Prom: ${fmt(totales.compras?.promedio || 0)}`} icon={ShoppingCart} color="orange" />
+            <StatsCard title="Pagos" value={fmt(totales.pagos?.total || 0)} subtitle={`${totales.pagos?.cantidad || 0} órdenes | Prom: ${fmt(totales.pagos?.promedio || 0)}`} icon={CreditCard} color="purple" />
+          </div>
+        </div>
+      )}
+
+      {/* Facturación por Actividad */}
+      {factActividad && (
+        <div className="bg-white rounded-xl border border-gray-200">
+          <div className="p-4 border-b border-gray-200">
+            <h2 className="text-lg font-semibold text-gray-900">Facturación por Actividad de Cliente</h2>
+            <p className="text-sm text-gray-500">Total: {fmt(factActividad.resumen?.total || 0)} en {factActividad.resumen?.cantidad || 0} facturas</p>
+          </div>
+          <DataTable
+            loading={false}
+            columns={[
+              { key: "actividad", label: "Actividad" },
+              { key: "total_facturado", label: "Total Facturado", align: "right", render: (v) => fmt(Number(v)) },
+              { key: "cantidad", label: "Cantidad", align: "right" },
+              { key: "promedio", label: "Promedio", align: "right", render: (v) => fmt(Number(v)) },
+              { key: "clientes_unicos", label: "Clientes", align: "right" },
+            ]}
+            data={factActividad.agrupado || []}
+            emptyMessage="No hay datos de facturación por actividad"
+          />
+        </div>
+      )}
+
+      {/* Cobranzas por Actividad */}
+      {cobActividad && (
+        <div className="bg-white rounded-xl border border-gray-200">
+          <div className="p-4 border-b border-gray-200">
+            <h2 className="text-lg font-semibold text-gray-900">Cobranzas por Actividad de Cliente</h2>
+            <p className="text-sm text-gray-500">Total: {fmt(cobActividad.resumen?.total || 0)} en {cobActividad.resumen?.cantidad || 0} recibos</p>
+          </div>
+          <DataTable
+            loading={false}
+            columns={[
+              { key: "actividad", label: "Actividad" },
+              { key: "total_cobrado", label: "Total Cobrado", align: "right", render: (v) => fmt(Number(v)) },
+              { key: "cantidad", label: "Cantidad", align: "right" },
+              { key: "promedio", label: "Promedio", align: "right", render: (v) => fmt(Number(v)) },
+              { key: "clientes_unicos", label: "Clientes", align: "right" },
+            ]}
+            data={cobActividad.agrupado || []}
+            emptyMessage="No hay datos de cobranzas por actividad"
+          />
         </div>
       )}
 

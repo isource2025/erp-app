@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { apiFetch, apiDownload } from "@/lib/api";
 import FilterBar from "@/components/FilterBar";
 import DataTable from "@/components/DataTable";
-import { FileText, Download, ChevronLeft, ChevronRight } from "lucide-react";
+import StatsCard from "@/components/StatsCard";
+import { FileText, Download, ChevronLeft, ChevronRight, ShoppingCart, DollarSign, ArrowLeft } from "lucide-react";
 
 interface Comprobante {
   IdTransaccion: number;
@@ -51,7 +53,11 @@ function getTipoLabel(tipo: string) {
   return tiposCbte.find((t) => t.value === tipo)?.label || tipo;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+interface ComprasRelData { factura: any; comprasRelacionadas: any[]; resumen: { cantidad_compras: number; total_compras: number; margen: number } }
+
 export default function ComprobantesPage() {
+  const router = useRouter();
   const [data, setData] = useState<ComprobantesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [ano, setAno] = useState("");
@@ -61,6 +67,9 @@ export default function ComprobantesPage() {
   const [page, setPage] = useState(1);
   const [anos, setAnos] = useState<number[]>([]);
   const [exporting, setExporting] = useState(false);
+  const [selectedFC, setSelectedFC] = useState<Comprobante | null>(null);
+  const [comprasRel, setComprasRel] = useState<ComprasRelData | null>(null);
+  const [loadingCompras, setLoadingCompras] = useState(false);
 
   // Get available years on mount
   useEffect(() => {
@@ -111,6 +120,93 @@ export default function ComprobantesPage() {
       setExporting(false);
     }
   };
+
+  const handleRowClick = async (row: Comprobante) => {
+    if (String(row.TipoCbte).trim() !== "FC") return;
+    setSelectedFC(row);
+    setLoadingCompras(true);
+    try {
+      const result = await apiFetch<ComprasRelData>(`/api/ventas/compras-relacionadas?idTransaccion=${row.IdTransaccion}`);
+      setComprasRel(result);
+    } catch (e) { console.error(e); }
+    finally { setLoadingCompras(false); }
+  };
+
+  const exportComprasExcel = async (idTransaccion: number) => {
+    try {
+      const token = localStorage.getItem("token");
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5005";
+      const response = await fetch(`${apiUrl}/api/ventas/compras-relacionadas/export?idTransaccion=${idTransaccion}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error("Error exportando");
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Compras_FC_${idTransaccion}.xlsx`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (e) { console.error(e); }
+  };
+
+  // Vista detalle de compras relacionadas a una FC
+  if (selectedFC) {
+    const cr = comprasRel?.resumen;
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <button onClick={() => { setSelectedFC(null); setComprasRel(null); }} className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg font-medium transition-colors cursor-pointer">
+            <ArrowLeft className="w-4 h-4" /> Volver a Comprobantes
+          </button>
+        </div>
+
+        <div className="bg-gradient-to-r from-indigo-600 to-indigo-800 rounded-xl p-6 text-white">
+          <h1 className="text-2xl font-bold">FC {(selectedFC.Letra_Cbte || "").trim()} {selectedFC.NroCbte}</h1>
+          <p className="text-indigo-200 mt-1">{(selectedFC.Cliente || "").trim()} — {fmtDate(selectedFC.Fecha)} — Total: {fmt(selectedFC.ImporteTotal)}</p>
+        </div>
+
+        {cr && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <StatsCard title="Importe Factura" value={fmt(selectedFC.ImporteTotal)} subtitle="Factura de venta" icon={FileText} color="blue" />
+            <StatsCard title="Total Compras" value={fmt(cr.total_compras)} subtitle={`${cr.cantidad_compras} compras vinculadas`} icon={ShoppingCart} color="orange" />
+            <StatsCard title="Margen" value={fmt(cr.margen)} subtitle={selectedFC.ImporteTotal > 0 ? `${((cr.margen / selectedFC.ImporteTotal) * 100).toFixed(1)}% del total` : ''} icon={DollarSign} color={cr.margen >= 0 ? "green" : "purple"} />
+            <div className="flex items-center justify-center">
+              <button
+                onClick={() => exportComprasExcel(selectedFC.IdTransaccion)}
+                className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white hover:bg-green-700 rounded-lg font-medium transition-colors cursor-pointer"
+              >
+                <Download className="w-5 h-5" /> Exportar Excel
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="bg-white rounded-xl border border-gray-200">
+          <div className="p-4 border-b border-gray-200">
+            <h2 className="text-lg font-semibold text-gray-900">Compras Relacionadas</h2>
+            <p className="text-sm text-gray-500">{comprasRel?.comprasRelacionadas.length || 0} compras vinculadas a esta factura</p>
+          </div>
+          <DataTable
+            loading={loadingCompras}
+            columns={[
+              { key: "fecha", label: "Fecha", align: "center", render: (v) => fmtDate(v) },
+              { key: "letra", label: "Letra", align: "center" },
+              { key: "nro_cbte", label: "N° Cbte", align: "center" },
+              { key: "proveedor", label: "Proveedor" },
+              { key: "tipo_proveedor", label: "Tipo", align: "center" },
+              { key: "categoria", label: "Categoría", align: "center" },
+              { key: "importe", label: "Total", align: "right", render: (v) => fmt(Number(v)) },
+              { key: "iva", label: "IVA", align: "right", render: (v) => fmt(Number(v)) },
+              { key: "saldo", label: "Saldo", align: "right", render: (v) => fmt(Number(v)) },
+            ]}
+            data={comprasRel?.comprasRelacionadas || []}
+            emptyMessage="No hay compras vinculadas a esta factura"
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -228,7 +324,9 @@ export default function ComprobantesPage() {
         ]}
         data={(data?.comprobantes as unknown as Record<string, unknown>[]) || []}
         emptyMessage="No hay comprobantes para los filtros seleccionados"
+        onRowClick={(row) => handleRowClick(row as unknown as Comprobante)}
       />
+      <p className="text-xs text-gray-400 text-center">Click en una Factura (FC) para ver sus compras relacionadas</p>
 
       {data && data.totalPages > 1 && (
         <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 px-4 py-3">

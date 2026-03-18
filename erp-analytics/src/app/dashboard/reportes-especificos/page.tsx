@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import DataTable from "@/components/DataTable";
 import StatsCard from "@/components/StatsCard";
-import { FileText, ShoppingCart, Wallet, CreditCard, Calendar, Building2 } from "lucide-react";
+import { FileText, ShoppingCart, Wallet, CreditCard, Calendar, Building2, ChevronLeft, ChevronRight, Search, X, ExternalLink, ArrowLeft } from "lucide-react";
 
 function fmt(val: number) {
   return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(val);
@@ -12,11 +13,181 @@ function fmt(val: number) {
 
 const mesesCortos = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 
+// Componente para tabla de análisis por hospital con scroll horizontal
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function AnalisisHospitalTable({ data }: { data: any }) {
+  const [search, setSearch] = useState("");
+  const [scrollPos, setScrollPos] = useState(0);
+  const [selectedRow, setSelectedRow] = useState<number | null>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
+
+  const filteredData = useMemo(() => {
+    if (!data?.detallePorHospital) return [];
+    if (!search.trim()) return data.detallePorHospital;
+    const q = search.toLowerCase();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return data.detallePorHospital.filter((h: any) => 
+      h.hospital.toLowerCase().includes(q)
+    );
+  }, [data, search]);
+
+  const scrollLeft = () => {
+    if (tableRef.current) {
+      tableRef.current.scrollBy({ left: -300, behavior: 'smooth' });
+    }
+  };
+
+  const scrollRight = () => {
+    if (tableRef.current) {
+      tableRef.current.scrollBy({ left: 300, behavior: 'smooth' });
+    }
+  };
+
+  const handleScroll = () => {
+    if (tableRef.current) {
+      setScrollPos(tableRef.current.scrollLeft);
+    }
+  };
+
+  useEffect(() => {
+    const updateScrollButtons = () => {
+      if (tableRef.current) {
+        setScrollPos(tableRef.current.scrollLeft);
+      }
+    };
+    const ref = tableRef.current;
+    if (ref) {
+      ref.addEventListener('scroll', updateScrollButtons);
+      updateScrollButtons();
+      return () => ref.removeEventListener('scroll', updateScrollButtons);
+    }
+  }, [filteredData]);
+
+  const canScrollLeft = scrollPos > 5;
+  const canScrollRight = tableRef.current 
+    ? scrollPos < (tableRef.current.scrollWidth - tableRef.current.clientWidth - 5)
+    : true;
+
+  if (!data) return null;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Análisis Detallado por Hospital</h2>
+        <p className="text-sm text-gray-600 mb-4">Desglose por categoría de proveedor</p>
+      </div>
+
+      {/* Filtros */}
+      <div className="bg-white rounded-xl border border-gray-200 p-3">
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Buscar hospital..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          {search && (
+            <button
+              onClick={() => setSearch("")}
+              className="flex items-center gap-1 px-3 py-2 text-sm bg-red-50 text-red-600 hover:bg-red-100 rounded-lg cursor-pointer transition-colors"
+            >
+              <X className="w-4 h-4" /> Limpiar
+            </button>
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={scrollLeft}
+              disabled={!canScrollLeft}
+              className="p-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
+              title="Desplazar izquierda"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <button
+              onClick={scrollRight}
+              disabled={!canScrollRight}
+              className="p-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
+              title="Desplazar derecha"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+        <div className="text-xs text-gray-500 mt-2">
+          {filteredData.length} de {data.detallePorHospital?.length || 0} hospitales
+        </div>
+      </div>
+
+      {/* Tabla con scroll horizontal */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div 
+          ref={tableRef}
+          className="overflow-x-scroll"
+          style={{ maxWidth: '100%', overflowY: 'visible' }}
+        >
+          <table className="w-full border-collapse" style={{ minWidth: 'max-content' }}>
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-200">
+                <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-left sticky left-0 bg-gray-50 z-20 border-r border-gray-200">Hospital</th>
+                {(data.categoriasProveedor || []).map((categ: string) => (
+                  <th key={categ} className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right whitespace-nowrap min-w-[120px]">{categ}</th>
+                ))}
+                <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right bg-blue-50 whitespace-nowrap min-w-[140px] sticky right-0 z-20 border-l border-gray-200">Total General</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filteredData.length === 0 ? (
+                <tr>
+                  <td colSpan={99} className="px-4 py-8 text-center text-gray-400">
+                    {search ? "No hay resultados para la búsqueda" : "No hay datos de análisis por hospital"}
+                  </td>
+                </tr>
+              ) : (
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                filteredData.map((h: any, i: number) => (
+                  <tr 
+                    key={i} 
+                    onClick={() => setSelectedRow(selectedRow === i ? null : i)}
+                    className={`cursor-pointer transition-colors ${
+                      selectedRow === i 
+                        ? 'bg-blue-100 hover:bg-blue-200' 
+                        : 'hover:bg-gray-50'
+                    }`}
+                  >
+                    <td className={`px-4 py-3 text-sm font-medium sticky left-0 z-10 border-r border-gray-200 ${
+                      selectedRow === i ? 'bg-blue-100' : 'bg-white'
+                    }`}>{h.hospital}</td>
+                    {(data.categoriasProveedor || []).map((categ: string) => (
+                      <td key={categ} className="px-4 py-3 text-sm text-right whitespace-nowrap">
+                        {h.categorias[categ] ? fmt(h.categorias[categ]) : '-'}
+                      </td>
+                    ))}
+                    <td className={`px-4 py-3 text-sm text-right font-semibold whitespace-nowrap sticky right-0 z-10 border-l border-gray-200 ${
+                      selectedRow === i ? 'bg-blue-100' : 'bg-blue-50'
+                    }`}>{fmt(h.total_general)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ReportesEspecificosPage() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<string>("facturacion");
   const [loading, setLoading] = useState(false);
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
+
+  const [filtroHospitalOP, setFiltroHospitalOP] = useState("");
 
   // Estados para cada tipo de reporte
   const [facturacionPeriodo, setFacturacionPeriodo] = useState<any>(null);
@@ -46,6 +217,9 @@ export default function ReportesEspecificosPage() {
     params.set("fechaInicio", fechaInicio);
     params.set("fechaFin", fechaFin);
 
+    const opParams = new URLSearchParams(params);
+    if (filtroHospitalOP) opParams.set("idHospital", filtroHospitalOP);
+
     try {
       const [fPeriodo, fActividad, cHospital, cProveedor, rPeriodo, rActividad, oPago, aHospital] = await Promise.all([
         apiFetch(`/api/reportes-especificos/facturacion/periodo?${params}`),
@@ -54,7 +228,7 @@ export default function ReportesEspecificosPage() {
         apiFetch(`/api/reportes-especificos/compras/por-tipo-proveedor?${params}`),
         apiFetch(`/api/reportes-especificos/recibos/periodo?${params}`),
         apiFetch(`/api/reportes-especificos/recibos/actividad-cliente?${params}`),
-        apiFetch(`/api/reportes-especificos/ordenes-pago/por-hospital-motivo?${params}`),
+        apiFetch(`/api/reportes-especificos/ordenes-pago/por-hospital-motivo?${opParams}`),
         apiFetch(`/api/reportes-especificos/analisis-hospital?${params}`)
       ]);
 
@@ -71,7 +245,7 @@ export default function ReportesEspecificosPage() {
     } finally {
       setLoading(false);
     }
-  }, [fechaInicio, fechaFin]);
+  }, [fechaInicio, fechaFin, filtroHospitalOP]);
 
   useEffect(() => {
     if (fechaInicio && fechaFin) {
@@ -89,6 +263,14 @@ export default function ReportesEspecificosPage() {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-4">
+        <button 
+          onClick={() => router.push('/dashboard/reportes')} 
+          className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg font-medium transition-colors cursor-pointer"
+        >
+          <ArrowLeft className="w-4 h-4" /> Volver a Reportes
+        </button>
+      </div>
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Reportes Específicos</h1>
         <p className="text-gray-500 mt-1">Análisis detallado por categorías</p>
@@ -203,6 +385,15 @@ export default function ReportesEspecificosPage() {
                           { key: "cantidad_facturas", label: "Cant. Facturas", align: "right" },
                           { key: "total_facturado", label: "Total Facturado", align: "right", render: (v) => fmt(Number(v)) },
                           { key: "promedio_factura", label: "Promedio", align: "right", render: (v) => fmt(Number(v)) },
+                          { key: "actions", label: "Acciones", align: "center", render: (_v, row: any) => (
+                            <button
+                              onClick={() => router.push('/dashboard/ventas')}
+                              className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 rounded cursor-pointer transition-colors"
+                              title="Ver facturas en Ventas"
+                            >
+                              <ExternalLink className="w-3 h-3" /> Ver Facturas
+                            </button>
+                          )},
                         ]}
                         data={facturacionActividad.detallePorCliente || []}
                         emptyMessage="No hay datos de facturación por cliente"
@@ -238,6 +429,15 @@ export default function ReportesEspecificosPage() {
                             { key: "total_comprado", label: "Total Comprado", align: "right", render: (v) => fmt(Number(v)) },
                             { key: "promedio_compra", label: "Promedio", align: "right", render: (v) => fmt(Number(v)) },
                             { key: "compra_maxima", label: "Máximo", align: "right", render: (v) => fmt(Number(v)) },
+                            { key: "actions", label: "Acciones", align: "center", render: (_v, row: any) => (
+                              <button
+                                onClick={() => router.push('/dashboard/compras')}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-orange-50 text-orange-600 hover:bg-orange-100 rounded cursor-pointer transition-colors"
+                                title="Ver compras"
+                              >
+                                <ExternalLink className="w-3 h-3" /> Ver Compras
+                              </button>
+                            )},
                           ]}
                           data={comprasHospital.detallePorHospital || []}
                           emptyMessage="No hay datos de compras por hospital"
@@ -273,6 +473,15 @@ export default function ReportesEspecificosPage() {
                             { key: "tipo_proveedor_id", label: "Tipo", align: "center" },
                             { key: "cantidad_compras", label: "Cant. Compras", align: "right" },
                             { key: "total_comprado", label: "Total Comprado", align: "right", render: (v) => fmt(Number(v)) },
+                            { key: "actions", label: "Acciones", align: "center", render: (_v, row: any) => (
+                              <button
+                                onClick={() => router.push('/dashboard/proveedores')}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-purple-50 text-purple-600 hover:bg-purple-100 rounded cursor-pointer transition-colors"
+                                title="Ver proveedor"
+                              >
+                                <ExternalLink className="w-3 h-3" /> Ver Proveedor
+                              </button>
+                            )},
                           ]}
                           data={comprasProveedor.detallePorProveedor || []}
                           emptyMessage="No hay datos de compras por proveedor"
@@ -336,6 +545,15 @@ export default function ReportesEspecificosPage() {
                           { key: "cantidad_recibos", label: "Cant. Recibos", align: "right" },
                           { key: "total_cobrado", label: "Total Cobrado", align: "right", render: (v) => fmt(Number(v)) },
                           { key: "promedio_recibo", label: "Promedio", align: "right", render: (v) => fmt(Number(v)) },
+                          { key: "actions", label: "Acciones", align: "center", render: (_v, row: any) => (
+                            <button
+                              onClick={() => router.push('/dashboard/cobranzas')}
+                              className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded cursor-pointer transition-colors"
+                              title="Ver cobranzas"
+                            >
+                              <ExternalLink className="w-3 h-3" /> Ver Cobranzas
+                            </button>
+                          )},
                         ]}
                         data={recibosActividad.detallePorCliente || []}
                         emptyMessage="No hay datos de recibos por cliente"
@@ -349,30 +567,68 @@ export default function ReportesEspecificosPage() {
               {activeTab === "ordenes-pago" && (
                 <div className="space-y-6">
                   <div>
-                    <h2 className="text-lg font-semibold text-gray-900 mb-4">Total Pagado por Hospital y Motivo</h2>
+                    <h2 className="text-lg font-semibold text-gray-900 mb-4">Órdenes de Pago</h2>
                     
                     {ordenesPago && (
                       <>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                          <StatsCard
-                            title="Total Pagado"
-                            value={fmt(ordenesPago.resumen.total_pagado)}
-                            subtitle={`${ordenesPago.resumen.cantidad_ordenes} órdenes de pago`}
-                            icon={CreditCard}
-                            color="orange"
-                          />
+                        <div className="flex items-center gap-4 mb-6">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
+                            <StatsCard
+                              title="Total Pagado"
+                              value={fmt(ordenesPago.resumen.total_pagado)}
+                              subtitle={`${ordenesPago.resumen.cantidad_ordenes} órdenes de pago`}
+                              icon={CreditCard}
+                              color="orange"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Building2 className="w-5 h-5 text-gray-400" />
+                            <select
+                              value={filtroHospitalOP}
+                              onChange={(e) => setFiltroHospitalOP(e.target.value)}
+                              className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-xs"
+                            >
+                              <option value="">Todos los hospitales</option>
+                              {(ordenesPago.hospitalesDisponibles || []).map((h: any) => (
+                                <option key={h.id} value={h.id}>{h.nombre}</option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
 
+                        <h3 className="text-md font-semibold text-gray-800 mb-3">Por Tipo de Proveedor</h3>
                         <DataTable
                           loading={false}
                           columns={[
-                            { key: "hospital", label: "Hospital" },
-                            { key: "id_motivo", label: "ID Motivo", align: "center" },
+                            { key: "tipo_proveedor", label: "Tipo de Proveedor" },
                             { key: "cantidad_ordenes", label: "Cant. Órdenes", align: "right" },
-                            { key: "total_pagado", label: "Total Pagado", align: "right", render: (v) => fmt(Number(v)) },
-                            { key: "promedio_pago", label: "Promedio", align: "right", render: (v) => fmt(Number(v)) },
+                            { key: "total_pagado", label: "Total Pagado", align: "right", render: (v: any) => fmt(Number(v)) },
+                            { key: "promedio_pago", label: "Promedio", align: "right", render: (v: any) => fmt(Number(v)) },
                           ]}
-                          data={ordenesPago.detallePorHospitalMotivo || []}
+                          data={ordenesPago.agrupadoPorTipo || []}
+                          emptyMessage="No hay datos"
+                        />
+
+                        <h3 className="text-md font-semibold text-gray-800 mb-3 mt-6">Detalle por Proveedor</h3>
+                        <DataTable
+                          loading={false}
+                          columns={[
+                            { key: "proveedor", label: "Proveedor / Hospital" },
+                            { key: "tipo_proveedor", label: "Tipo", align: "center" },
+                            { key: "cantidad_ordenes", label: "Cant. Órdenes", align: "right" },
+                            { key: "total_pagado", label: "Total Pagado", align: "right", render: (v: any) => fmt(Number(v)) },
+                            { key: "promedio_pago", label: "Promedio", align: "right", render: (v: any) => fmt(Number(v)) },
+                            { key: "actions", label: "Acciones", align: "center", render: (_v: any, row: any) => (
+                              <button
+                                onClick={() => router.push('/dashboard/pagos')}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-purple-50 text-purple-600 hover:bg-purple-100 rounded cursor-pointer transition-colors"
+                                title="Ver órdenes de pago"
+                              >
+                                <ExternalLink className="w-3 h-3" /> Ver Pagos
+                              </button>
+                            )},
+                          ]}
+                          data={ordenesPago.detallePorProveedor || []}
                           emptyMessage="No hay datos de órdenes de pago"
                         />
                       </>
@@ -383,31 +639,7 @@ export default function ReportesEspecificosPage() {
 
               {/* ANÁLISIS POR HOSPITAL */}
               {activeTab === "analisis-hospital" && (
-                <div className="space-y-6">
-                  <div>
-                    <h2 className="text-lg font-semibold text-gray-900 mb-4">Análisis Detallado por Hospital</h2>
-                    <p className="text-sm text-gray-600 mb-4">
-                      Débitos, gastos administrativos, sobreasignación, honorarios y transferencias
-                    </p>
-                    
-                    {analisisHospital && (
-                      <DataTable
-                        loading={false}
-                        columns={[
-                          { key: "hospital", label: "Hospital" },
-                          { key: "total_debitos", label: "Débitos", align: "right", render: (v) => fmt(Number(v)) },
-                          { key: "total_gasto_administrativo", label: "Gasto Admin.", align: "right", render: (v) => fmt(Number(v)) },
-                          { key: "total_sobreasignacion", label: "Sobreasignación", align: "right", render: (v) => fmt(Number(v)) },
-                          { key: "total_honorarios", label: "Honorarios", align: "right", render: (v) => fmt(Number(v)) },
-                          { key: "total_transferencias", label: "Transferencias", align: "right", render: (v) => fmt(Number(v)) },
-                          { key: "total_general", label: "Total General", align: "right", render: (v) => fmt(Number(v)) },
-                        ]}
-                        data={analisisHospital.detallePorHospital || []}
-                        emptyMessage="No hay datos de análisis por hospital"
-                      />
-                    )}
-                  </div>
-                </div>
+                <AnalisisHospitalTable data={analisisHospital} />
               )}
             </>
           )}

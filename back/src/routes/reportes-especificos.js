@@ -292,44 +292,88 @@ router.get("/recibos/actividad-cliente", authMiddleware, async (req, res) => {
   }
 });
 
-// 7. ORDEN DE PAGO - Total pagado por cada Hospital por motivo de pago
+// 7. ORDEN DE PAGO - Total pagado por hospital y tipo de proveedor + filtro por hospital
 router.get("/ordenes-pago/por-hospital-motivo", authMiddleware, async (req, res) => {
   try {
-    const { fechaInicio, fechaFin } = req.query;
+    const { fechaInicio, fechaFin, idHospital } = req.query;
     const pool = await getPool();
 
-    const query = `
+    let where = `op.IDStatus <> 0`;
+    if (fechaInicio) where += ` AND op.Fecha >= @fechaInicio`;
+    if (fechaFin) where += ` AND op.Fecha <= @fechaFin`;
+    if (idHospital) where += ` AND op.Proveedor = @idHospital`;
+
+    // Agrupado por tipo de proveedor (honorarios, gasto, etc.)
+    const tipoQuery = `
       SELECT 
-        op.Proveedor as id_hospital,
-        LTRIM(RTRIM(op.Descripcion)) as hospital,
-        op.idmotivo as id_motivo,
+        ISNULL(tp.IDTIPO_PROV, 0) as id_tipo,
+        ISNULL(LTRIM(RTRIM(tp.DESCRIPCION)), 'SIN TIPO') as tipo_proveedor,
         COUNT(*) as cantidad_ordenes,
         SUM(op.ImporteTotal) as total_pagado,
         AVG(op.ImporteTotal) as promedio_pago
       FROM OrdenPago op
-      WHERE op.IDStatus <> 0
-        ${fechaInicio ? 'AND op.Fecha >= @fechaInicio' : ''}
-        ${fechaFin ? 'AND op.Fecha <= @fechaFin' : ''}
-      GROUP BY op.Proveedor, op.Descripcion, op.idmotivo
+      LEFT JOIN PROVEEDORES p ON p.IDPROVEEDOR = op.Proveedor
+      LEFT JOIN TIPOS_PROVEEDORES tp ON tp.IDTIPO_PROV = p.IDTIPO_PROV
+      WHERE ${where}
+      GROUP BY tp.IDTIPO_PROV, tp.DESCRIPCION
       ORDER BY total_pagado DESC
     `;
+    const tipoRequest = pool.request();
+    if (fechaInicio) tipoRequest.input("fechaInicio", new Date(fechaInicio));
+    if (fechaFin) tipoRequest.input("fechaFin", new Date(fechaFin));
+    if (idHospital) tipoRequest.input("idHospital", parseInt(idHospital));
+    const tipoResult = await tipoRequest.query(tipoQuery);
 
-    const request = pool.request();
-    if (fechaInicio) request.input("fechaInicio", new Date(fechaInicio));
-    if (fechaFin) request.input("fechaFin", new Date(fechaFin));
+    // Detalle por proveedor/hospital
+    const detalleQuery = `
+      SELECT 
+        op.Proveedor as id_proveedor,
+        LTRIM(RTRIM(op.Descripcion)) as proveedor,
+        ISNULL(LTRIM(RTRIM(tp.DESCRIPCION)), 'SIN TIPO') as tipo_proveedor,
+        COUNT(*) as cantidad_ordenes,
+        SUM(op.ImporteTotal) as total_pagado,
+        AVG(op.ImporteTotal) as promedio_pago
+      FROM OrdenPago op
+      LEFT JOIN PROVEEDORES p ON p.IDPROVEEDOR = op.Proveedor
+      LEFT JOIN TIPOS_PROVEEDORES tp ON tp.IDTIPO_PROV = p.IDTIPO_PROV
+      WHERE ${where}
+      GROUP BY op.Proveedor, op.Descripcion, tp.DESCRIPCION
+      ORDER BY total_pagado DESC
+    `;
+    const detalleRequest = pool.request();
+    if (fechaInicio) detalleRequest.input("fechaInicio", new Date(fechaInicio));
+    if (fechaFin) detalleRequest.input("fechaFin", new Date(fechaFin));
+    if (idHospital) detalleRequest.input("idHospital", parseInt(idHospital));
+    const detalleResult = await detalleRequest.query(detalleQuery);
 
-    const result = await request.query(query);
+    // Lista de hospitales/proveedores para filtro
+    const hospitalesQuery = `
+      SELECT DISTINCT op.Proveedor as id, LTRIM(RTRIM(op.Descripcion)) as nombre
+      FROM OrdenPago op WHERE op.IDStatus <> 0
+      ORDER BY nombre
+    `;
+    const hospitalesResult = await pool.request().query(hospitalesQuery);
 
-    const total = result.recordset.reduce((sum, r) => sum + r.total_pagado, 0);
+    const totalGeneral = tipoResult.recordset.reduce((s, r) => s + r.total_pagado, 0);
+    const cantidadGeneral = tipoResult.recordset.reduce((s, r) => s + r.cantidad_ordenes, 0);
 
     res.json({
       resumen: {
-        total_pagado: total,
-        cantidad_ordenes: result.recordset.reduce((sum, r) => sum + r.cantidad_ordenes, 0)
+        total_pagado: totalGeneral,
+        cantidad_ordenes: cantidadGeneral
       },
-      detallePorHospitalMotivo: result.recordset.map(r => ({
+      agrupadoPorTipo: tipoResult.recordset.map(r => ({
         ...r,
-        hospital: (r.hospital || "").trim()
+        tipo_proveedor: (r.tipo_proveedor || "").trim()
+      })),
+      detallePorProveedor: detalleResult.recordset.map(r => ({
+        ...r,
+        proveedor: (r.proveedor || "").trim(),
+        tipo_proveedor: (r.tipo_proveedor || "").trim()
+      })),
+      hospitalesDisponibles: hospitalesResult.recordset.map(r => ({
+        ...r,
+        nombre: (r.nombre || "").trim()
       }))
     });
 
@@ -339,32 +383,48 @@ router.get("/ordenes-pago/por-hospital-motivo", authMiddleware, async (req, res)
   }
 });
 
-// 8. ANÁLISIS POR HOSPITAL - Débitos, gastos administrativos, sobreasignación, honorarios, transferencias
+// 8. ANÁLISIS POR HOSPITAL - Desglose por categoría de proveedor (TIPOS_PROV_CATEG)
 router.get("/analisis-hospital", authMiddleware, async (req, res) => {
   try {
     const { fechaInicio, fechaFin, idHospital } = req.query;
     const pool = await getPool();
 
-    // Obtener compras por hospital con categorización
+    // Obtener las categorías de proveedor que existen en los datos
+    const categQuery = `
+      SELECT DISTINCT 
+        ISNULL(c.IdTipo_Prov_Categ, 0) as id_categ,
+        ISNULL(LTRIM(RTRIM(tc.DESCRIPCION)), 'SIN CATEGORÍA') as categoria
+      FROM compras c
+      LEFT JOIN TIPOS_PROV_CATEG tc ON tc.IDTIPO_PROV_CATEG = c.IdTipo_Prov_Categ
+      WHERE c.IdStatus <> 0
+        ${fechaInicio ? 'AND c.Fecha >= @fechaInicio1' : ''}
+        ${fechaFin ? 'AND c.Fecha <= @fechaFin1' : ''}
+      ORDER BY id_categ
+    `;
+    const categRequest = pool.request();
+    if (fechaInicio) categRequest.input("fechaInicio1", new Date(fechaInicio));
+    if (fechaFin) categRequest.input("fechaFin1", new Date(fechaFin));
+    const categResult = await categRequest.query(categQuery);
+    const categorias = categResult.recordset;
+
+    // Obtener datos desglosados por hospital y categoría de proveedor
     const query = `
       SELECT 
         c.IdCliente as id_hospital,
         LTRIM(RTRIM(c.Descripcion)) as hospital,
-        SUM(CASE WHEN c.IdTipo_Prov_Categ = 1 THEN c.ImporteTotal ELSE 0 END) as total_debitos,
-        SUM(CASE WHEN c.IdTipo_Prov_Categ = 2 THEN c.ImporteTotal ELSE 0 END) as total_gasto_administrativo,
-        SUM(CASE WHEN c.IdTipo_Prov_Categ = 3 THEN c.ImporteTotal ELSE 0 END) as total_sobreasignacion,
-        SUM(CASE WHEN c.IdTipo_Prov_Categ = 4 THEN c.ImporteTotal ELSE 0 END) as total_honorarios,
-        SUM(CASE WHEN c.IdTipo_Prov_Categ = 5 THEN c.ImporteTotal ELSE 0 END) as total_transferencias,
-        SUM(c.ImporteTotal) as total_general,
-        COUNT(*) as cantidad_compras
+        ISNULL(c.IdTipo_Prov_Categ, 0) as id_categ,
+        ISNULL(LTRIM(RTRIM(tc.DESCRIPCION)), 'SIN CATEGORÍA') as categoria,
+        SUM(c.ImporteTotal) as total,
+        COUNT(*) as cantidad
       FROM compras c
+      LEFT JOIN TIPOS_PROV_CATEG tc ON tc.IDTIPO_PROV_CATEG = c.IdTipo_Prov_Categ
       WHERE c.IdStatus <> 0
         AND c.IdCliente IS NOT NULL
         ${fechaInicio ? 'AND c.Fecha >= @fechaInicio' : ''}
         ${fechaFin ? 'AND c.Fecha <= @fechaFin' : ''}
         ${idHospital ? 'AND c.IdCliente = @idHospital' : ''}
-      GROUP BY c.IdCliente, c.Descripcion
-      ORDER BY total_general DESC
+      GROUP BY c.IdCliente, c.Descripcion, c.IdTipo_Prov_Categ, tc.DESCRIPCION
+      ORDER BY c.Descripcion, c.IdTipo_Prov_Categ
     `;
 
     const request = pool.request();
@@ -374,11 +434,28 @@ router.get("/analisis-hospital", authMiddleware, async (req, res) => {
 
     const result = await request.query(query);
 
+    // Pivotar datos: agrupar por hospital con columnas dinámicas por categoría
+    const hospitalMap = {};
+    result.recordset.forEach(r => {
+      const key = r.id_hospital;
+      if (!hospitalMap[key]) {
+        hospitalMap[key] = {
+          id_hospital: r.id_hospital,
+          hospital: (r.hospital || "").trim(),
+          total_general: 0,
+          cantidad_total: 0,
+          categorias: {}
+        };
+      }
+      const categKey = (r.categoria || "SIN CATEGORÍA").trim();
+      hospitalMap[key].categorias[categKey] = (hospitalMap[key].categorias[categKey] || 0) + r.total;
+      hospitalMap[key].total_general += r.total;
+      hospitalMap[key].cantidad_total += r.cantidad;
+    });
+
     res.json({
-      detallePorHospital: result.recordset.map(r => ({
-        ...r,
-        hospital: (r.hospital || "").trim()
-      }))
+      categoriasProveedor: categorias.map(c => c.categoria.trim()),
+      detallePorHospital: Object.values(hospitalMap)
     });
 
   } catch (error) {

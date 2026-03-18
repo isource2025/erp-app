@@ -302,4 +302,125 @@ router.get("/comparacion", authMiddleware, async (req, res) => {
   }
 });
 
+// Facturación agrupada por actividad de cliente
+router.get("/facturacion-por-actividad", authMiddleware, async (req, res) => {
+  try {
+    const { fechaInicio, fechaFin } = req.query;
+    const pool = await getPool();
+    const inicio = fechaInicio ? new Date(fechaInicio) : new Date(new Date().setMonth(new Date().getMonth() - 12));
+    const fin = fechaFin ? new Date(fechaFin) : new Date();
+
+    const query = `
+      SELECT 
+        ISNULL(a.IdActividad, 0) as id_actividad,
+        ISNULL(LTRIM(RTRIM(a.Descripcion)), 'Sin Actividad') as actividad,
+        SUM(c.ImporteTotal) as total_facturado,
+        COUNT(*) as cantidad,
+        AVG(c.ImporteTotal) as promedio,
+        COUNT(DISTINCT c.IdCliente) as clientes_unicos
+      FROM cbtes c
+      LEFT JOIN Clientes cl ON cl.IdCliente = c.IdCliente
+      LEFT JOIN Actividades a ON a.IdActividad = cl.IdActividad
+      WHERE c.TipoCbte = 'FC' AND c.IDStatus <> 0
+        AND c.Fecha >= @inicio AND c.Fecha <= @fin
+      GROUP BY a.IdActividad, a.Descripcion
+      ORDER BY total_facturado DESC
+    `;
+    const result = await pool.request()
+      .input("inicio", inicio)
+      .input("fin", fin)
+      .query(query);
+
+    const totalGeneral = result.recordset.reduce((s, r) => s + r.total_facturado, 0);
+    const cantidadGeneral = result.recordset.reduce((s, r) => s + r.cantidad, 0);
+
+    res.json({
+      resumen: { total: totalGeneral, cantidad: cantidadGeneral },
+      agrupado: result.recordset.map(r => ({ ...r, actividad: (r.actividad || "").trim() }))
+    });
+  } catch (error) {
+    console.error("Facturación por actividad error:", error);
+    res.status(500).json({ error: "Error obteniendo facturación por actividad" });
+  }
+});
+
+// Cobranzas agrupadas por actividad de cliente
+router.get("/cobranzas-por-actividad", authMiddleware, async (req, res) => {
+  try {
+    const { fechaInicio, fechaFin } = req.query;
+    const pool = await getPool();
+    const inicio = fechaInicio ? new Date(fechaInicio) : new Date(new Date().setMonth(new Date().getMonth() - 12));
+    const fin = fechaFin ? new Date(fechaFin) : new Date();
+
+    const query = `
+      SELECT 
+        ISNULL(a.IdActividad, 0) as id_actividad,
+        ISNULL(LTRIM(RTRIM(a.Descripcion)), 'Sin Actividad') as actividad,
+        SUM(c.ImporteTotal) as total_cobrado,
+        COUNT(*) as cantidad,
+        AVG(c.ImporteTotal) as promedio,
+        COUNT(DISTINCT c.IdCliente) as clientes_unicos
+      FROM cbtes c
+      LEFT JOIN Clientes cl ON cl.IdCliente = c.IdCliente
+      LEFT JOIN Actividades a ON a.IdActividad = cl.IdActividad
+      WHERE c.TipoCbte = 'RC' AND c.IDStatus <> 0
+        AND c.Fecha >= @inicio AND c.Fecha <= @fin
+      GROUP BY a.IdActividad, a.Descripcion
+      ORDER BY total_cobrado DESC
+    `;
+    const result = await pool.request()
+      .input("inicio", inicio)
+      .input("fin", fin)
+      .query(query);
+
+    const totalGeneral = result.recordset.reduce((s, r) => s + r.total_cobrado, 0);
+    const cantidadGeneral = result.recordset.reduce((s, r) => s + r.cantidad, 0);
+
+    res.json({
+      resumen: { total: totalGeneral, cantidad: cantidadGeneral },
+      agrupado: result.recordset.map(r => ({ ...r, actividad: (r.actividad || "").trim() }))
+    });
+  } catch (error) {
+    console.error("Cobranzas por actividad error:", error);
+    res.status(500).json({ error: "Error obteniendo cobranzas por actividad" });
+  }
+});
+
+// Totales generales agrupados (ventas, compras, cobranzas, pagos)
+router.get("/totales-agrupados", authMiddleware, async (req, res) => {
+  try {
+    const { fechaInicio, fechaFin } = req.query;
+    const pool = await getPool();
+    const inicio = fechaInicio ? new Date(fechaInicio) : new Date(new Date().setMonth(new Date().getMonth() - 12));
+    const fin = fechaFin ? new Date(fechaFin) : new Date();
+
+    const ventasQ = await pool.request().input("i", inicio).input("f", fin).query(`
+      SELECT SUM(ImporteTotal) as total, COUNT(*) as cantidad, AVG(ImporteTotal) as promedio,
+        MAX(ImporteTotal) as maximo, MIN(ImporteTotal) as minimo, SUM(Saldo) as saldo
+      FROM cbtes WHERE TipoCbte='FC' AND IDStatus<>0 AND Fecha>=@i AND Fecha<=@f`);
+    const cobranzasQ = await pool.request().input("i", inicio).input("f", fin).query(`
+      SELECT SUM(ImporteTotal) as total, COUNT(*) as cantidad, AVG(ImporteTotal) as promedio,
+        MAX(ImporteTotal) as maximo, MIN(ImporteTotal) as minimo, SUM(Saldo) as saldo
+      FROM cbtes WHERE TipoCbte='RC' AND IDStatus<>0 AND Fecha>=@i AND Fecha<=@f`);
+    const comprasQ = await pool.request().input("i", inicio).input("f", fin).query(`
+      SELECT ISNULL(SUM(ImporteTotal),0) as total, COUNT(*) as cantidad, ISNULL(AVG(ImporteTotal),0) as promedio,
+        ISNULL(MAX(ImporteTotal),0) as maximo, ISNULL(MIN(ImporteTotal),0) as minimo, ISNULL(SUM(Importe_Saldo),0) as saldo
+      FROM compras WHERE IdStatus<>0 AND Fecha>=@i AND Fecha<=@f`);
+    const pagosQ = await pool.request().input("i", inicio).input("f", fin).query(`
+      SELECT ISNULL(SUM(ImporteTotal),0) as total, COUNT(*) as cantidad, ISNULL(AVG(ImporteTotal),0) as promedio,
+        ISNULL(MAX(ImporteTotal),0) as maximo, ISNULL(MIN(ImporteTotal),0) as minimo, ISNULL(SUM(Saldo),0) as saldo
+      FROM OrdenPago WHERE IDStatus<>0 AND Fecha>=@i AND Fecha<=@f`);
+
+    res.json({
+      ventas: ventasQ.recordset[0],
+      cobranzas: cobranzasQ.recordset[0],
+      compras: comprasQ.recordset[0],
+      pagos: pagosQ.recordset[0]
+    });
+  } catch (error) {
+    console.error("Totales agrupados error:", error);
+    res.status(500).json({ error: "Error obteniendo totales agrupados" });
+  }
+});
+
 module.exports = router;

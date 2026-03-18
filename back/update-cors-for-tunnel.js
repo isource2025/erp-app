@@ -25,7 +25,8 @@ let envContent = fs.readFileSync(envPath, 'utf-8');
 // Reemplazar línea CORS_ORIGINS
 const corsRegex = /CORS_ORIGINS=.*/;
 const baseOrigins = 'http://localhost:3000,http://localhost:3001,http://localhost:3002';
-const newCorsLine = `CORS_ORIGINS=${baseOrigins},${newTunnelUrl}`;
+const vercelDomain = 'https://erp-app-eta.vercel.app';
+const newCorsLine = `CORS_ORIGINS=${baseOrigins},${newTunnelUrl},${vercelDomain}`;
 
 envContent = envContent.replace(corsRegex, newCorsLine);
 
