@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import DataTable from "@/components/DataTable";
 import StatsCard from "@/components/StatsCard";
-import { FileText, ShoppingCart, Wallet, CreditCard, Calendar, Building2, ChevronLeft, ChevronRight, Search, X, ExternalLink, ArrowLeft } from "lucide-react";
+import { ArrowLeft, FileText, ShoppingCart, Wallet, CreditCard, Building2, Search, X, ChevronLeft, ChevronRight, ChevronDown, ExternalLink, Calendar } from "lucide-react";
 
 function fmt(val: number) {
   return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(val);
@@ -13,163 +13,204 @@ function fmt(val: number) {
 
 const mesesCortos = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 
-// Componente para tabla de análisis por hospital con scroll horizontal
+// Tabla scrollable reutilizable
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function AnalisisHospitalTable({ data }: { data: any }) {
+function ScrollableTable({ data, columns, label, searchPlaceholder }: { data: any[]; columns: string[]; label: string; searchPlaceholder: string }) {
   const [search, setSearch] = useState("");
-  const [scrollPos, setScrollPos] = useState(0);
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const tableRef = useRef<HTMLDivElement>(null);
 
   const filteredData = useMemo(() => {
-    if (!data?.detallePorHospital) return [];
-    if (!search.trim()) return data.detallePorHospital;
+    if (!data?.length) return [];
+    if (!search.trim()) return data;
     const q = search.toLowerCase();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return data.detallePorHospital.filter((h: any) => 
-      h.hospital.toLowerCase().includes(q)
-    );
+    return data.filter((h: any) => (h.hospital || "").toLowerCase().includes(q));
   }, [data, search]);
 
-  const scrollLeft = () => {
-    if (tableRef.current) {
-      tableRef.current.scrollBy({ left: -300, behavior: 'smooth' });
-    }
-  };
-
-  const scrollRight = () => {
-    if (tableRef.current) {
-      tableRef.current.scrollBy({ left: 300, behavior: 'smooth' });
-    }
-  };
-
-  const handleScroll = () => {
-    if (tableRef.current) {
-      setScrollPos(tableRef.current.scrollLeft);
-    }
-  };
-
-  useEffect(() => {
-    const updateScrollButtons = () => {
-      if (tableRef.current) {
-        setScrollPos(tableRef.current.scrollLeft);
-      }
-    };
-    const ref = tableRef.current;
-    if (ref) {
-      ref.addEventListener('scroll', updateScrollButtons);
-      updateScrollButtons();
-      return () => ref.removeEventListener('scroll', updateScrollButtons);
-    }
-  }, [filteredData]);
-
-  const canScrollLeft = scrollPos > 5;
-  const canScrollRight = tableRef.current 
-    ? scrollPos < (tableRef.current.scrollWidth - tableRef.current.clientWidth - 5)
-    : true;
-
-  if (!data) return null;
+  const scrollLeft = () => { tableRef.current?.scrollBy({ left: -300, behavior: 'smooth' }); };
+  const scrollRight = () => { tableRef.current?.scrollBy({ left: 300, behavior: 'smooth' }); };
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Análisis Detallado por Hospital</h2>
-        <p className="text-sm text-gray-600 mb-4">Desglose por categoría de proveedor</p>
-      </div>
-
-      {/* Filtros */}
+    <div className="space-y-4">
       <div className="bg-white rounded-xl border border-gray-200 p-3">
         <div className="flex items-center gap-3">
           <div className="relative flex-1">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Buscar hospital..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <input type="text" placeholder={searchPlaceholder} value={search} onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
           {search && (
-            <button
-              onClick={() => setSearch("")}
-              className="flex items-center gap-1 px-3 py-2 text-sm bg-red-50 text-red-600 hover:bg-red-100 rounded-lg cursor-pointer transition-colors"
-            >
+            <button onClick={() => setSearch("")} className="flex items-center gap-1 px-3 py-2 text-sm bg-red-50 text-red-600 hover:bg-red-100 rounded-lg cursor-pointer transition-colors">
               <X className="w-4 h-4" /> Limpiar
             </button>
           )}
           <div className="flex items-center gap-2">
-            <button
-              onClick={scrollLeft}
-              disabled={!canScrollLeft}
-              className="p-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
-              title="Desplazar izquierda"
-            >
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-            <button
-              onClick={scrollRight}
-              disabled={!canScrollRight}
-              className="p-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
-              title="Desplazar derecha"
-            >
-              <ChevronRight className="w-5 h-5" />
-            </button>
+            <button onClick={scrollLeft} className="p-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 cursor-pointer transition-colors" title="Desplazar izquierda"><ChevronLeft className="w-5 h-5" /></button>
+            <button onClick={scrollRight} className="p-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 cursor-pointer transition-colors" title="Desplazar derecha"><ChevronRight className="w-5 h-5" /></button>
           </div>
         </div>
-        <div className="text-xs text-gray-500 mt-2">
-          {filteredData.length} de {data.detallePorHospital?.length || 0} hospitales
-        </div>
+        <div className="text-xs text-gray-500 mt-2">{filteredData.length} de {data?.length || 0} {label}</div>
       </div>
 
-      {/* Tabla con scroll horizontal */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div 
-          ref={tableRef}
-          className="overflow-x-scroll"
-          style={{ maxWidth: '100%', overflowY: 'visible' }}
-        >
+        <div ref={tableRef} className="overflow-x-scroll" style={{ maxWidth: '100%', overflowY: 'visible' }}>
           <table className="w-full border-collapse" style={{ minWidth: 'max-content' }}>
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-left sticky left-0 bg-gray-50 z-20 border-r border-gray-200">Hospital</th>
-                {(data.categoriasProveedor || []).map((categ: string) => (
-                  <th key={categ} className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right whitespace-nowrap min-w-[120px]">{categ}</th>
+                {columns.map((col: string) => (
+                  <th key={col} className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right whitespace-nowrap min-w-[120px]">{col}</th>
                 ))}
                 <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right bg-blue-50 whitespace-nowrap min-w-[140px] sticky right-0 z-20 border-l border-gray-200">Total General</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filteredData.length === 0 ? (
+                <tr><td colSpan={99} className="px-4 py-8 text-center text-gray-400">{search ? "No hay resultados" : "No hay datos"}</td></tr>
+              ) : (
+                filteredData.map((h: any, i: number) => (
+                  <tr key={i} onClick={() => setSelectedRow(selectedRow === i ? null : i)}
+                    className={`cursor-pointer transition-colors ${selectedRow === i ? 'bg-blue-100 hover:bg-blue-200' : 'hover:bg-gray-50'}`}>
+                    <td className={`px-4 py-3 text-sm font-medium sticky left-0 z-10 border-r border-gray-200 ${selectedRow === i ? 'bg-blue-100' : 'bg-white'}`}>{h.hospital}</td>
+                    {columns.map((col: string) => {
+                      const valMap = h.categorias || h.conceptos || {};
+                      return <td key={col} className="px-4 py-3 text-sm text-right whitespace-nowrap">{valMap[col] ? fmt(valMap[col]) : '-'}</td>;
+                    })}
+                    <td className={`px-4 py-3 text-sm text-right font-semibold whitespace-nowrap sticky right-0 z-10 border-l border-gray-200 ${selectedRow === i ? 'bg-blue-100' : 'bg-blue-50'}`}>{fmt(h.total_general)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Componente para análisis por hospital - Agrupado por concepto con drill-down
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function AnalisisHospitalTable({ data }: { data: any; conceptoTags: number[]; onConceptoTagsChange: (tags: number[]) => void }) {
+  const [expandedConcepto, setExpandedConcepto] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+
+  if (!data || !data.conceptos) return null;
+
+  const filteredConceptos = useMemo(() => {
+    if (!search.trim()) return data.conceptos;
+    const q = search.toLowerCase();
+    return data.conceptos.filter((c: any) => 
+      c.concepto.toLowerCase().includes(q) ||
+      c.hospitales.some((h: any) => h.hospital.toLowerCase().includes(q))
+    );
+  }, [data.conceptos, search]);
+
+  const toggleConcepto = (id: number) => {
+    setExpandedConcepto(expandedConcepto === id ? null : id);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-gray-900 mb-2">Movimientos Bancarios por Concepto</h2>
+        <p className="text-sm text-gray-600 mb-3">Click en cada concepto para ver el detalle por hospital</p>
+
+        {/* Búsqueda */}
+        <div className="bg-white rounded-xl border border-gray-200 p-3 mb-4">
+          <div className="flex items-center gap-3">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input 
+                type="text" 
+                placeholder="Buscar concepto o hospital..." 
+                value={search} 
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" 
+              />
+            </div>
+            {search && (
+              <button 
+                onClick={() => setSearch("")} 
+                className="flex items-center gap-1 px-3 py-2 text-sm bg-red-50 text-red-600 hover:bg-red-100 rounded-lg cursor-pointer transition-colors"
+              >
+                <X className="w-4 h-4" /> Limpiar
+              </button>
+            )}
+          </div>
+          <div className="text-xs text-gray-500 mt-2">{filteredConceptos.length} conceptos</div>
+        </div>
+
+        {/* Tabla agrupada por concepto */}
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-left">Concepto</th>
+                <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Cantidad Movimientos</th>
+                <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Total</th>
+                <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-center">Acción</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filteredConceptos.length === 0 ? (
                 <tr>
-                  <td colSpan={99} className="px-4 py-8 text-center text-gray-400">
-                    {search ? "No hay resultados para la búsqueda" : "No hay datos de análisis por hospital"}
+                  <td colSpan={4} className="px-4 py-8 text-center text-gray-400">
+                    {search ? "No hay resultados" : "No hay datos"}
                   </td>
                 </tr>
               ) : (
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                filteredData.map((h: any, i: number) => (
-                  <tr 
-                    key={i} 
-                    onClick={() => setSelectedRow(selectedRow === i ? null : i)}
-                    className={`cursor-pointer transition-colors ${
-                      selectedRow === i 
-                        ? 'bg-blue-100 hover:bg-blue-200' 
-                        : 'hover:bg-gray-50'
-                    }`}
-                  >
-                    <td className={`px-4 py-3 text-sm font-medium sticky left-0 z-10 border-r border-gray-200 ${
-                      selectedRow === i ? 'bg-blue-100' : 'bg-white'
-                    }`}>{h.hospital}</td>
-                    {(data.categoriasProveedor || []).map((categ: string) => (
-                      <td key={categ} className="px-4 py-3 text-sm text-right whitespace-nowrap">
-                        {h.categorias[categ] ? fmt(h.categorias[categ]) : '-'}
+                filteredConceptos.map((concepto: any) => (
+                  <React.Fragment key={concepto.id_concepto}>
+                    {/* Fila del concepto (carpeta) */}
+                    <tr 
+                      className={`cursor-pointer transition-colors ${expandedConcepto === concepto.id_concepto ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
+                      onClick={() => toggleConcepto(concepto.id_concepto)}
+                    >
+                      <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                        <div className="flex items-center gap-2">
+                          {expandedConcepto === concepto.id_concepto ? (
+                            <ChevronDown className="w-4 h-4 text-blue-600" />
+                          ) : (
+                            <ChevronRight className="w-4 h-4 text-gray-400" />
+                          )}
+                          {concepto.concepto}
+                        </div>
                       </td>
-                    ))}
-                    <td className={`px-4 py-3 text-sm text-right font-semibold whitespace-nowrap sticky right-0 z-10 border-l border-gray-200 ${
-                      selectedRow === i ? 'bg-blue-100' : 'bg-blue-50'
-                    }`}>{fmt(h.total_general)}</td>
-                  </tr>
+                      <td className="px-4 py-3 text-sm text-right text-gray-700">{concepto.cantidad_movimientos}</td>
+                      <td className="px-4 py-3 text-sm text-right font-semibold text-gray-900">{fmt(concepto.total_general)}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="text-xs text-gray-500">{concepto.hospitales.length} hospital{concepto.hospitales.length !== 1 ? 'es' : ''}</span>
+                      </td>
+                    </tr>
+                    
+                    {/* Detalle de hospitales (expandible) */}
+                    {expandedConcepto === concepto.id_concepto && (
+                      <tr>
+                        <td colSpan={4} className="px-0 py-0 bg-gray-50">
+                          <div className="px-8 py-4">
+                            <table className="w-full">
+                              <thead>
+                                <tr className="border-b border-gray-200">
+                                  <th className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider text-left">Hospital</th>
+                                  <th className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Movimientos</th>
+                                  <th className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Total</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {concepto.hospitales.map((hospital: any, idx: number) => (
+                                  <tr key={idx} className="hover:bg-white transition-colors">
+                                    <td className="px-4 py-2 text-sm text-gray-700">{hospital.hospital}</td>
+                                    <td className="px-4 py-2 text-sm text-right text-gray-600">{hospital.cantidad_movimientos}</td>
+                                    <td className="px-4 py-2 text-sm text-right font-medium text-gray-900">{fmt(hospital.total)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))
               )}
             </tbody>
@@ -188,6 +229,7 @@ export default function ReportesEspecificosPage() {
   const [fechaFin, setFechaFin] = useState("");
 
   const [filtroHospitalOP, setFiltroHospitalOP] = useState("");
+  const [conceptoTags, setConceptoTags] = useState<number[]>([]);
 
   // Estados para cada tipo de reporte
   const [facturacionPeriodo, setFacturacionPeriodo] = useState<any>(null);
@@ -229,7 +271,7 @@ export default function ReportesEspecificosPage() {
         apiFetch(`/api/reportes-especificos/recibos/periodo?${params}`),
         apiFetch(`/api/reportes-especificos/recibos/actividad-cliente?${params}`),
         apiFetch(`/api/reportes-especificos/ordenes-pago/por-hospital-motivo?${opParams}`),
-        apiFetch(`/api/reportes-especificos/analisis-hospital?${params}`)
+        apiFetch(`/api/reportes-especificos/analisis-hospital?${params}${conceptoTags.length ? '&conceptos=' + conceptoTags.join(',') : ''}`)
       ]);
 
       setFacturacionPeriodo(fPeriodo);
@@ -241,11 +283,11 @@ export default function ReportesEspecificosPage() {
       setOrdenesPago(oPago);
       setAnalisisHospital(aHospital);
     } catch (e) {
-      console.error(e);
+      console.error('Error fetching data:', e);
     } finally {
       setLoading(false);
     }
-  }, [fechaInicio, fechaFin, filtroHospitalOP]);
+  }, [fechaInicio, fechaFin, filtroHospitalOP, conceptoTags]);
 
   useEffect(() => {
     if (fechaInicio && fechaFin) {
@@ -620,9 +662,9 @@ export default function ReportesEspecificosPage() {
                             { key: "promedio_pago", label: "Promedio", align: "right", render: (v: any) => fmt(Number(v)) },
                             { key: "actions", label: "Acciones", align: "center", render: (_v: any, row: any) => (
                               <button
-                                onClick={() => router.push('/dashboard/pagos')}
+                                onClick={() => router.push(`/dashboard/pagos?idProveedor=${row.id_proveedor}&nombre=${encodeURIComponent(row.proveedor)}`)}
                                 className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-purple-50 text-purple-600 hover:bg-purple-100 rounded cursor-pointer transition-colors"
-                                title="Ver órdenes de pago"
+                                title="Ver órdenes de pago de este proveedor"
                               >
                                 <ExternalLink className="w-3 h-3" /> Ver Pagos
                               </button>
@@ -639,7 +681,7 @@ export default function ReportesEspecificosPage() {
 
               {/* ANÁLISIS POR HOSPITAL */}
               {activeTab === "analisis-hospital" && (
-                <AnalisisHospitalTable data={analisisHospital} />
+                <AnalisisHospitalTable data={analisisHospital} conceptoTags={[]} onConceptoTagsChange={() => {}} />
               )}
             </>
           )}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import FilterBar from "@/components/FilterBar";
 import DataTable from "@/components/DataTable";
@@ -11,15 +12,17 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-interface Agrupado { concepto: string; id_proveedor: number; total_pagado: number; cantidad: number }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+interface Agrupado { id_concepto: number; concepto: string; cantidad_ordenes: number; total_pagado: number }
+interface TipoProv { id_tipo: number; tipo_proveedor: string; cantidad_ordenes: number; total_pagado: number; promedio: number }
+interface DetalleOP { id: number; fecha: string; ano: number; mes: number; nro_cbte: number; letra: string; proveedor: string; tipo_proveedor: string; importe: number; saldo: number }
 interface Resumen { cantidad: number; total: number; promedio: number; maximo: number; minimo: number; saldo_pendiente: number }
-interface Detalle { id: number; fecha: string; ano: number; mes: number; nro_cbte: number; letra: string; concepto: string; importe: number; saldo: number }
 interface PagosData {
   agrupado: Agrupado[];
   totalesMensuales: { ano: number; mes: number; total_pagado: number; cantidad: number }[];
   anosDisponibles: number[];
 }
-interface DetalleData { resumen: Resumen; detalle: Detalle[] }
+interface DetalleData { resumen: Resumen; agrupadoPorTipo: TipoProv[]; detalle: DetalleOP[] }
 
 const mesesCortos = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 
@@ -28,6 +31,7 @@ function fmt(val: number) {
 }
 
 export default function PagosPage() {
+  const searchParams = useSearchParams();
   const [data, setData] = useState<PagosData | null>(null);
   const [loading, setLoading] = useState(true);
   const [ano, setAno] = useState("");
@@ -35,6 +39,23 @@ export default function PagosPage() {
   const [selectedConcepto, setSelectedConcepto] = useState<Agrupado | null>(null);
   const [detalleData, setDetalleData] = useState<DetalleData | null>(null);
   const [loadingDetalle, setLoadingDetalle] = useState(false);
+  const [directProveedor, setDirectProveedor] = useState<{id: string; nombre: string} | null>(null);
+
+  // Auto-load detail if navigated with idProveedor param
+  useEffect(() => {
+    const idProv = searchParams.get('idProveedor');
+    const nombre = searchParams.get('nombre') || 'Proveedor';
+    if (idProv) {
+      setDirectProveedor({ id: idProv, nombre });
+      setLoadingDetalle(true);
+      const params = new URLSearchParams();
+      params.set('idProveedor', idProv);
+      apiFetch<DetalleData>(`/api/pagos/detalle?${params}`)
+        .then(result => setDetalleData(result))
+        .catch(console.error)
+        .finally(() => setLoadingDetalle(false));
+    }
+  }, [searchParams]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -57,7 +78,7 @@ export default function PagosPage() {
       const params = new URLSearchParams();
       if (ano) params.set("ano", ano);
       if (mes) params.set("mes", mes);
-      params.set("idProveedor", String(item.id_proveedor));
+      params.set("idConcepto", String(item.id_concepto));
       const result = await apiFetch<DetalleData>(`/api/pagos/detalle?${params}`);
       setDetalleData(result);
     } catch (e) { console.error(e); }
@@ -65,7 +86,7 @@ export default function PagosPage() {
   };
 
   const totalGeneral = data?.agrupado?.reduce((s, r) => s + r.total_pagado, 0) || 0;
-  const cantidadGeneral = data?.agrupado?.reduce((s, r) => s + r.cantidad, 0) || 0;
+  const cantidadGeneral = data?.agrupado?.reduce((s, r) => s + r.cantidad_ordenes, 0) || 0;
 
   const chartData = (data?.totalesMensuales || [])
     .slice(0, ano || mes ? undefined : 12)
@@ -75,6 +96,65 @@ export default function PagosPage() {
     }))
     .reverse();
 
+  // Vista detalle: navegación directa desde reportes-especificos con idProveedor
+  if (directProveedor && detalleData) {
+    const r = detalleData.resumen;
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <button onClick={() => { setDirectProveedor(null); setDetalleData(null); }} className="flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 hover:bg-purple-100 rounded-lg font-medium transition-colors cursor-pointer">
+            <ArrowLeft className="w-4 h-4" /> Volver a Conceptos
+          </button>
+        </div>
+
+        <div className="bg-gradient-to-r from-purple-600 to-purple-800 rounded-xl p-6 text-white">
+          <h1 className="text-2xl font-bold">{directProveedor.nombre}</h1>
+          <p className="text-purple-200 mt-1">Órdenes de pago de este proveedor</p>
+        </div>
+
+        {r && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <StatsCard title="Total Pagado" value={fmt(r.total)} subtitle={`${r.cantidad} órdenes`} icon={DollarSign} color="purple" />
+            <StatsCard title="Promedio por Orden" value={fmt(r.promedio)} subtitle={`Máx: ${fmt(r.maximo)}`} icon={ArrowUpDown} color="blue" />
+            <StatsCard title="Saldo Pendiente" value={fmt(r.saldo_pendiente)} subtitle={`Mín: ${fmt(r.minimo)}`} icon={TrendingDown} color="orange" />
+            <StatsCard title="Órdenes de Pago" value={String(r.cantidad)} subtitle="Comprobantes emitidos" icon={FileText} color="green" />
+          </div>
+        )}
+
+        {detalleData.agrupadoPorTipo && detalleData.agrupadoPorTipo.length > 0 && (
+          <div className="bg-white rounded-xl border border-gray-200">
+            <div className="p-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">Por Tipo de Proveedor</h2>
+            </div>
+            <DataTable loading={false} columns={[
+              { key: "tipo_proveedor", label: "Tipo de Proveedor" },
+              { key: "cantidad_ordenes", label: "Cant. Órdenes", align: "right" },
+              { key: "total_pagado", label: "Total Pagado", align: "right", render: (v) => fmt(Number(v)) },
+              { key: "promedio", label: "Promedio", align: "right", render: (v) => fmt(Number(v)) },
+            ]} data={detalleData.agrupadoPorTipo} emptyMessage="Sin datos" />
+          </div>
+        )}
+
+        <div className="bg-white rounded-xl border border-gray-200">
+          <div className="p-4 border-b border-gray-200">
+            <h2 className="text-lg font-semibold text-gray-900">Detalle de Órdenes de Pago</h2>
+            <p className="text-sm text-gray-500">{detalleData.detalle.length} comprobantes</p>
+          </div>
+          <DataTable loading={loadingDetalle} columns={[
+            { key: "fecha", label: "Fecha", align: "center", render: (v) => new Date(v as string).toLocaleDateString('es-AR') },
+            { key: "letra", label: "Letra", align: "center" },
+            { key: "nro_cbte", label: "N° Cbte", align: "center" },
+            { key: "proveedor", label: "Proveedor" },
+            { key: "tipo_proveedor", label: "Tipo", align: "center" },
+            { key: "importe", label: "Importe", align: "right", render: (v) => fmt(Number(v)) },
+            { key: "saldo", label: "Saldo", align: "right", render: (v) => fmt(Number(v)) },
+          ]} data={detalleData.detalle} emptyMessage="No hay pagos" />
+        </div>
+      </div>
+    );
+  }
+
+  // Vista detalle: concepto bancario seleccionado
   if (selectedConcepto) {
     const r = detalleData?.resumen;
     return (
@@ -87,7 +167,7 @@ export default function PagosPage() {
 
         <div className="bg-gradient-to-r from-purple-600 to-purple-800 rounded-xl p-6 text-white">
           <h1 className="text-2xl font-bold">{selectedConcepto.concepto}</h1>
-          <p className="text-purple-200 mt-1">Detalle de órdenes de pago</p>
+          <p className="text-purple-200 mt-1">Órdenes de pago con este concepto bancario</p>
         </div>
 
         {r && (
@@ -99,9 +179,31 @@ export default function PagosPage() {
           </div>
         )}
 
+        {/* Agrupado por tipo de proveedor */}
+        {detalleData?.agrupadoPorTipo && detalleData.agrupadoPorTipo.length > 0 && (
+          <div className="bg-white rounded-xl border border-gray-200">
+            <div className="p-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">Por Tipo de Proveedor</h2>
+              <p className="text-sm text-gray-500">Distribución dentro de &quot;{selectedConcepto.concepto}&quot;</p>
+            </div>
+            <DataTable
+              loading={loadingDetalle}
+              columns={[
+                { key: "tipo_proveedor", label: "Tipo de Proveedor" },
+                { key: "cantidad_ordenes", label: "Cant. Órdenes", align: "right" },
+                { key: "total_pagado", label: "Total Pagado", align: "right", render: (v) => fmt(Number(v)) },
+                { key: "promedio", label: "Promedio", align: "right", render: (v) => fmt(Number(v)) },
+              ]}
+              data={detalleData.agrupadoPorTipo}
+              emptyMessage="Sin datos"
+            />
+          </div>
+        )}
+
+        {/* Detalle individual */}
         <div className="bg-white rounded-xl border border-gray-200">
           <div className="p-4 border-b border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-900">Órdenes de Pago</h2>
+            <h2 className="text-lg font-semibold text-gray-900">Detalle de Órdenes de Pago</h2>
             <p className="text-sm text-gray-500">{detalleData?.detalle.length || 0} comprobantes encontrados</p>
           </div>
           <DataTable
@@ -110,7 +212,8 @@ export default function PagosPage() {
               { key: "fecha", label: "Fecha", align: "center", render: (v) => new Date(v as string).toLocaleDateString('es-AR') },
               { key: "letra", label: "Letra", align: "center" },
               { key: "nro_cbte", label: "N° Cbte", align: "center" },
-              { key: "concepto", label: "Concepto" },
+              { key: "proveedor", label: "Proveedor" },
+              { key: "tipo_proveedor", label: "Tipo", align: "center" },
               { key: "importe", label: "Importe", align: "right", render: (v) => fmt(Number(v)) },
               { key: "saldo", label: "Saldo", align: "right", render: (v) => fmt(Number(v)) },
             ]}
@@ -126,7 +229,7 @@ export default function PagosPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Pagado</h1>
-        <p className="text-gray-500 mt-1">Pagos agrupados por concepto</p>
+        <p className="text-gray-500 mt-1">Pagos agrupados por concepto bancario</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -159,19 +262,19 @@ export default function PagosPage() {
 
       <div className="bg-white rounded-xl border border-gray-200">
         <div className="p-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">Por Concepto</h2>
-          <p className="text-sm text-gray-500">Click en una fila para ver el detalle</p>
+          <h2 className="text-lg font-semibold text-gray-900">Por Concepto Bancario</h2>
+          <p className="text-sm text-gray-500">Click en una fila para ver el detalle por tipo de proveedor</p>
         </div>
         <DataTable
           loading={loading}
           columns={[
             { key: "concepto", label: "Concepto" },
+            { key: "cantidad_ordenes", label: "Cant. Órdenes", align: "right" },
             { key: "total_pagado", label: "Total Pagado", align: "right", render: (v) => fmt(Number(v)) },
-            { key: "cantidad", label: "Cantidad", align: "right" },
           ]}
           data={data?.agrupado || []}
           emptyMessage="No hay datos de pagos para los filtros seleccionados"
-          onRowClick={(row) => fetchDetalle(row)}
+          onRowClick={(row) => fetchDetalle(row as unknown as Agrupado)}
         />
       </div>
     </div>

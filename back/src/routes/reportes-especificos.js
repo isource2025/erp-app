@@ -383,80 +383,99 @@ router.get("/ordenes-pago/por-hospital-motivo", authMiddleware, async (req, res)
   }
 });
 
-// 8. ANÁLISIS POR HOSPITAL - Desglose por categoría de proveedor (TIPOS_PROV_CATEG)
+// 8. ANÁLISIS POR HOSPITAL - Movimientos bancarios por concepto (ban_ctas_mov -> ban_tipos_mov)
 router.get("/analisis-hospital", authMiddleware, async (req, res) => {
   try {
-    const { fechaInicio, fechaFin, idHospital } = req.query;
+    const { fechaInicio, fechaFin, idHospital, conceptos } = req.query;
     const pool = await getPool();
+    
+    console.log('[analisis-hospital] Request params:', { fechaInicio, fechaFin, idHospital, conceptos });
 
-    // Obtener las categorías de proveedor que existen en los datos
-    const categQuery = `
-      SELECT DISTINCT 
-        ISNULL(c.IdTipo_Prov_Categ, 0) as id_categ,
-        ISNULL(LTRIM(RTRIM(tc.DESCRIPCION)), 'SIN CATEGORÍA') as categoria
-      FROM compras c
-      LEFT JOIN TIPOS_PROV_CATEG tc ON tc.IDTIPO_PROV_CATEG = c.IdTipo_Prov_Categ
-      WHERE c.IdStatus <> 0
-        ${fechaInicio ? 'AND c.Fecha >= @fechaInicio1' : ''}
-        ${fechaFin ? 'AND c.Fecha <= @fechaFin1' : ''}
-      ORDER BY id_categ
+    // === MOVIMIENTOS BANCARIOS POR CONCEPTO (ban_ctas_mov -> ban_tipos_mov) ===
+    // Obtener todos los conceptos bancarios disponibles
+    const conceptosQuery = `
+      SELECT DISTINCT b.Tipo_Movim as id_concepto, LTRIM(RTRIM(t.Descripcion)) as concepto
+      FROM ban_ctas_mov b
+      LEFT JOIN ban_tipos_mov t ON t.Tipo_Movim = b.Tipo_Movim
+      WHERE b.IdStatus IN (1, 2)
+        ${fechaInicio ? 'AND b.Fecha >= @fechaInicioC' : ''}
+        ${fechaFin ? 'AND b.Fecha <= @fechaFinC' : ''}
+      ORDER BY concepto
     `;
-    const categRequest = pool.request();
-    if (fechaInicio) categRequest.input("fechaInicio1", new Date(fechaInicio));
-    if (fechaFin) categRequest.input("fechaFin1", new Date(fechaFin));
-    const categResult = await categRequest.query(categQuery);
-    const categorias = categResult.recordset;
+    const conceptosReq = pool.request();
+    if (fechaInicio) conceptosReq.input("fechaInicioC", new Date(fechaInicio));
+    if (fechaFin) conceptosReq.input("fechaFinC", new Date(fechaFin));
+    const conceptosResult = await conceptosReq.query(conceptosQuery);
+    const conceptosDisponibles = conceptosResult.recordset.map(r => ({ ...r, concepto: (r.concepto || "").trim() }));
 
-    // Obtener datos desglosados por hospital y categoría de proveedor
-    const query = `
+    // Filtro por conceptos seleccionados (tags)
+    let conceptoFilter = '';
+    if (conceptos) {
+      const conceptoIds = conceptos.split(',').map(Number).filter(n => !isNaN(n));
+      if (conceptoIds.length > 0) {
+        conceptoFilter = `AND b.Tipo_Movim IN (${conceptoIds.join(',')})`;
+      }
+    }
+
+    // Movimientos bancarios individuales con su concepto
+    const movBanQuery = `
       SELECT 
-        c.IdCliente as id_hospital,
-        LTRIM(RTRIM(c.Descripcion)) as hospital,
-        ISNULL(c.IdTipo_Prov_Categ, 0) as id_categ,
-        ISNULL(LTRIM(RTRIM(tc.DESCRIPCION)), 'SIN CATEGORÍA') as categoria,
-        SUM(c.ImporteTotal) as total,
-        COUNT(*) as cantidad
-      FROM compras c
-      LEFT JOIN TIPOS_PROV_CATEG tc ON tc.IDTIPO_PROV_CATEG = c.IdTipo_Prov_Categ
-      WHERE c.IdStatus <> 0
-        AND c.IdCliente IS NOT NULL
-        ${fechaInicio ? 'AND c.Fecha >= @fechaInicio' : ''}
-        ${fechaFin ? 'AND c.Fecha <= @fechaFin' : ''}
-        ${idHospital ? 'AND c.IdCliente = @idHospital' : ''}
-      GROUP BY c.IdCliente, c.Descripcion, c.IdTipo_Prov_Categ, tc.DESCRIPCION
-      ORDER BY c.Descripcion, c.IdTipo_Prov_Categ
+        b.IdTransaccion as id_movimiento,
+        LTRIM(RTRIM(b.Concepto)) as hospital,
+        b.Tipo_Movim as id_concepto,
+        LTRIM(RTRIM(t.Descripcion)) as concepto,
+        b.Importe as total,
+        1 as cantidad_movimientos
+      FROM ban_ctas_mov b
+      LEFT JOIN ban_tipos_mov t ON t.Tipo_Movim = b.Tipo_Movim
+      WHERE b.IdStatus IN (1, 2)
+        ${fechaInicio ? 'AND b.Fecha >= @fechaInicioMB' : ''}
+        ${fechaFin ? 'AND b.Fecha <= @fechaFinMB' : ''}
+        ${conceptoFilter}
+      ORDER BY b.Tipo_Movim, b.Concepto
     `;
+    const movBanReq = pool.request();
+    if (fechaInicio) movBanReq.input("fechaInicioMB", new Date(fechaInicio));
+    if (fechaFin) movBanReq.input("fechaFinMB", new Date(fechaFin));
+    const movBanResult = await movBanReq.query(movBanQuery);
 
-    const request = pool.request();
-    if (fechaInicio) request.input("fechaInicio", new Date(fechaInicio));
-    if (fechaFin) request.input("fechaFin", new Date(fechaFin));
-    if (idHospital) request.input("idHospital", parseInt(idHospital));
+    // Debug: ver qué tipos de movimientos tenemos
+    const tiposUnicos = [...new Set(movBanResult.recordset.map(r => `${r.id_concepto}:${r.concepto}`))];
+    console.log('[analisis-hospital] Tipos de movimientos encontrados:', tiposUnicos);
 
-    const result = await request.query(query);
-
-    // Pivotar datos: agrupar por hospital con columnas dinámicas por categoría
-    const hospitalMap = {};
-    result.recordset.forEach(r => {
-      const key = r.id_hospital;
-      if (!hospitalMap[key]) {
-        hospitalMap[key] = {
-          id_hospital: r.id_hospital,
-          hospital: (r.hospital || "").trim(),
+    // Agrupar por concepto con detalle de movimientos
+    const conceptoMap = {};
+    movBanResult.recordset.forEach(r => {
+      const conceptoKey = r.id_concepto;
+      if (!conceptoMap[conceptoKey]) {
+        conceptoMap[conceptoKey] = {
+          id_concepto: r.id_concepto,
+          concepto: (r.concepto || "SIN CONCEPTO").trim(),
           total_general: 0,
-          cantidad_total: 0,
-          categorias: {}
+          cantidad_movimientos: 0,
+          hospitales: []
         };
       }
-      const categKey = (r.categoria || "SIN CATEGORÍA").trim();
-      hospitalMap[key].categorias[categKey] = (hospitalMap[key].categorias[categKey] || 0) + r.total;
-      hospitalMap[key].total_general += r.total;
-      hospitalMap[key].cantidad_total += r.cantidad;
+      conceptoMap[conceptoKey].hospitales.push({
+        id_movimiento: r.id_movimiento,
+        hospital: (r.hospital || "").trim(),
+        total: r.total,
+        cantidad_movimientos: r.cantidad_movimientos
+      });
+      conceptoMap[conceptoKey].total_general += r.total;
+      conceptoMap[conceptoKey].cantidad_movimientos += r.cantidad_movimientos;
     });
 
-    res.json({
-      categoriasProveedor: categorias.map(c => c.categoria.trim()),
-      detallePorHospital: Object.values(hospitalMap)
+    const response = {
+      conceptos: Object.values(conceptoMap)
+    };
+    
+    console.log('[analisis-hospital] Response:', {
+      conceptosCount: response.conceptos.length,
+      totalMovimientos: response.conceptos.reduce((sum, c) => sum + c.cantidad_movimientos, 0)
     });
+    
+    res.json(response);
 
   } catch (error) {
     console.error("Error en análisis por hospital:", error);

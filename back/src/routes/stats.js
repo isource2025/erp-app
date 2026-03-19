@@ -398,23 +398,31 @@ router.get("/cobranzas/detalle", authMiddleware, async (req, res) => {
   }
 });
 
-// Pagos stats - agrupado por concepto (descripción/proveedor)
+// Pagos stats - agrupado por concepto bancario (ban_tipos_mov via ban_ctas_mov)
 router.get("/pagos/stats", authMiddleware, async (req, res) => {
   try {
     const { ano, mes } = req.query;
     const pool = await getPool();
 
-    // Agrupación por concepto (Descripcion = nombre del proveedor/hospital)
-    let query = `SELECT 
-      LTRIM(RTRIM(op.Descripcion)) as concepto,
-      op.Proveedor as id_proveedor,
-      SUM(op.ImporteTotal) as total_pagado, 
-      COUNT(*) as cantidad
-      FROM OrdenPago op WHERE op.IDStatus <> 0`;
+    // Agrupación por tipo_movim (concepto bancario)
+    let where = `op.IDStatus <> 0`;
     const request = pool.request();
-    if (ano) { query += ` AND op.Ano = @ano`; request.input("ano", parseInt(ano)); }
-    if (mes) { query += ` AND op.Mes = @mes`; request.input("mes", parseInt(mes)); }
-    query += ` GROUP BY op.Descripcion, op.Proveedor ORDER BY total_pagado DESC`;
+    if (ano) { where += ` AND op.Ano = @ano`; request.input("ano", parseInt(ano)); }
+    if (mes) { where += ` AND op.Mes = @mes`; request.input("mes", parseInt(mes)); }
+
+    const query = `
+      SELECT 
+        b.Tipo_Movim as id_concepto,
+        LTRIM(RTRIM(t.Descripcion)) as concepto,
+        COUNT(DISTINCT b.IdTransacion_OP) as cantidad_ordenes,
+        SUM(b.Importe) as total_pagado
+      FROM ban_ctas_mov b
+      INNER JOIN OrdenPago op ON op.IdTransacion = b.IdTransacion_OP
+      LEFT JOIN ban_tipos_mov t ON t.Tipo_Movim = b.Tipo_Movim
+      WHERE b.IdTransacion_OP IS NOT NULL AND b.IdTransacion_OP > 0 AND ${where}
+      GROUP BY b.Tipo_Movim, t.Descripcion
+      ORDER BY total_pagado DESC
+    `;
     const result = await request.query(query);
 
     // Totales mensuales para gráfico
@@ -439,10 +447,10 @@ router.get("/pagos/stats", authMiddleware, async (req, res) => {
   }
 });
 
-// Pagos detalle por concepto
+// Pagos detalle por concepto bancario - drill-down muestra OPs con ese tipo_movim, agrupadas por tipo de proveedor
 router.get("/pagos/detalle", authMiddleware, async (req, res) => {
   try {
-    const { ano, mes, idProveedor } = req.query;
+    const { ano, mes, idConcepto, idProveedor } = req.query;
     const pool = await getPool();
 
     let where = `op.IDStatus <> 0`;
@@ -450,19 +458,59 @@ router.get("/pagos/detalle", authMiddleware, async (req, res) => {
     const resumenReq = pool.request();
     if (ano) { where += ` AND op.Ano = @ano`; request.input("ano", parseInt(ano)); resumenReq.input("ano", parseInt(ano)); }
     if (mes) { where += ` AND op.Mes = @mes`; request.input("mes", parseInt(mes)); resumenReq.input("mes", parseInt(mes)); }
+
+    // Si se filtra por concepto bancario, solo OPs que tengan ese tipo_movim en ban_ctas_mov
+    if (idConcepto !== undefined) {
+      where += ` AND op.IdTransacion IN (
+        SELECT DISTINCT IdTransacion_OP FROM ban_ctas_mov 
+        WHERE Tipo_Movim = @idConcepto AND IdTransacion_OP IS NOT NULL AND IdTransacion_OP > 0
+      )`;
+      request.input("idConcepto", parseInt(idConcepto));
+      resumenReq.input("idConcepto", parseInt(idConcepto));
+    }
+
     if (idProveedor !== undefined) {
       where += ` AND op.Proveedor = @idProveedor`;
       request.input("idProveedor", parseInt(idProveedor));
       resumenReq.input("idProveedor", parseInt(idProveedor));
     }
 
+    // Agrupación por tipo de proveedor
+    const agrupadoQuery = `
+      SELECT 
+        ISNULL(tp.IDTIPO_PROV, 0) as id_tipo,
+        ISNULL(LTRIM(RTRIM(tp.DESCRIPCION)), 'Sin Tipo') as tipo_proveedor,
+        COUNT(*) as cantidad_ordenes,
+        ISNULL(SUM(op.ImporteTotal), 0) as total_pagado,
+        ISNULL(AVG(op.ImporteTotal), 0) as promedio
+      FROM OrdenPago op
+      LEFT JOIN PROVEEDORES p ON p.IDPROVEEDOR = op.Proveedor
+      LEFT JOIN TIPOS_PROVEEDORES tp ON tp.IDTIPO_PROV = p.IDTIPO_PROV
+      WHERE ${where}
+      GROUP BY tp.IDTIPO_PROV, tp.DESCRIPCION
+      ORDER BY total_pagado DESC
+    `;
+    const agrupadoResult = await request.query(agrupadoQuery);
+
+    // Detalle individual de OPs
+    const detalleReq = pool.request();
+    let detalleWhere = where.replace(/@ano/g, '@ano2').replace(/@mes/g, '@mes2').replace(/@idConcepto/g, '@idConcepto2').replace(/@idProveedor/g, '@idProveedor2');
+    if (ano) detalleReq.input("ano2", parseInt(ano));
+    if (mes) detalleReq.input("mes2", parseInt(mes));
+    if (idConcepto !== undefined) detalleReq.input("idConcepto2", parseInt(idConcepto));
+    if (idProveedor !== undefined) detalleReq.input("idProveedor2", parseInt(idProveedor));
+
     const detalleQuery = `SELECT 
       op.IdTransacion as id, op.Fecha as fecha, op.Ano as ano, op.Mes as mes,
       op.NroCbte as nro_cbte, op.Letra_Cbte as letra,
-      LTRIM(RTRIM(op.Descripcion)) as concepto,
+      LTRIM(RTRIM(op.Descripcion)) as proveedor,
+      ISNULL(LTRIM(RTRIM(tp.DESCRIPCION)), 'Sin Tipo') as tipo_proveedor,
       op.ImporteTotal as importe, op.Saldo as saldo
-      FROM OrdenPago op WHERE ${where} ORDER BY op.Fecha DESC, op.IdTransacion DESC`;
-    const result = await request.query(detalleQuery);
+      FROM OrdenPago op
+      LEFT JOIN PROVEEDORES p ON p.IDPROVEEDOR = op.Proveedor
+      LEFT JOIN TIPOS_PROVEEDORES tp ON tp.IDTIPO_PROV = p.IDTIPO_PROV
+      WHERE ${detalleWhere} ORDER BY op.Fecha DESC, op.IdTransacion DESC`;
+    const detalleResult = await detalleReq.query(detalleQuery);
 
     const resumenQuery = `SELECT 
       COUNT(*) as cantidad,
@@ -476,7 +524,8 @@ router.get("/pagos/detalle", authMiddleware, async (req, res) => {
 
     res.json({
       resumen: resumenResult.recordset[0],
-      detalle: result.recordset.map(r => ({ ...r, concepto: (r.concepto || "").trim() }))
+      agrupadoPorTipo: agrupadoResult.recordset.map(r => ({ ...r, tipo_proveedor: (r.tipo_proveedor || "").trim() })),
+      detalle: detalleResult.recordset.map(r => ({ ...r, proveedor: (r.proveedor || "").trim(), tipo_proveedor: (r.tipo_proveedor || "").trim() }))
     });
   } catch (error) {
     console.error("Pagos detalle error:", error);
