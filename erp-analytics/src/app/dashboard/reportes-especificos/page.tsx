@@ -97,12 +97,14 @@ function AnalisisHospitalTable({ data }: { data: any; conceptoTags: number[]; on
   if (!data || !data.conceptos) return null;
 
   const filteredConceptos = useMemo(() => {
-    if (!search.trim()) return data.conceptos;
+    if (!search.trim()) return data.conceptos || [];
     const q = search.toLowerCase();
-    return data.conceptos.filter((c: any) => 
-      c.concepto.toLowerCase().includes(q) ||
-      c.hospitales.some((h: any) => h.hospital.toLowerCase().includes(q))
-    );
+    const filtered = (data.conceptos || []).filter((c: any) => {
+      const conceptoMatch = c.concepto?.toLowerCase().includes(q);
+      const hospitalMatch = c.hospitales?.some((h: any) => h.hospital?.toLowerCase().includes(q));
+      return conceptoMatch || hospitalMatch;
+    });
+    return filtered;
   }, [data.conceptos, search]);
 
   const toggleConcepto = (id: number) => {
@@ -191,19 +193,33 @@ function AnalisisHospitalTable({ data }: { data: any; conceptoTags: number[]; on
                             <table className="w-full">
                               <thead>
                                 <tr className="border-b border-gray-200">
-                                  <th className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider text-left">Hospital</th>
+                                  <th className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider text-left">Descripción</th>
                                   <th className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Movimientos</th>
                                   <th className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Total</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-gray-100">
-                                {concepto.hospitales.map((hospital: any, idx: number) => (
-                                  <tr key={idx} className="hover:bg-white transition-colors">
-                                    <td className="px-4 py-2 text-sm text-gray-700">{hospital.hospital}</td>
-                                    <td className="px-4 py-2 text-sm text-right text-gray-600">{hospital.cantidad_movimientos}</td>
-                                    <td className="px-4 py-2 text-sm text-right font-medium text-gray-900">{fmt(hospital.total)}</td>
-                                  </tr>
-                                ))}
+                                {(() => {
+                                  const filteredHospitales = search.trim() 
+                                    ? concepto.hospitales.filter((h: any) => h.hospital?.toLowerCase().includes(search.toLowerCase()))
+                                    : concepto.hospitales;
+                                  
+                                  return filteredHospitales.length > 0 ? (
+                                    filteredHospitales.map((hospital: any, idx: number) => (
+                                      <tr key={idx} className="hover:bg-white transition-colors">
+                                        <td className="px-4 py-2 text-sm text-gray-700">{hospital.hospital}</td>
+                                        <td className="px-4 py-2 text-sm text-right text-gray-600">{hospital.cantidad_movimientos}</td>
+                                        <td className="px-4 py-2 text-sm text-right font-medium text-gray-900">{fmt(hospital.total)}</td>
+                                      </tr>
+                                    ))
+                                  ) : (
+                                    <tr>
+                                      <td colSpan={3} className="px-4 py-4 text-center text-sm text-gray-400">
+                                        No hay movimientos que coincidan con "{search}"
+                                      </td>
+                                    </tr>
+                                  );
+                                })()}
                               </tbody>
                             </table>
                           </div>
